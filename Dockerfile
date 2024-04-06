@@ -9,7 +9,7 @@ COPY tf-cvae.py /app/
 
 # Install required Python packages
 RUN pip install tensorflow-probability
-RUN pip install imageio
+RUN pip install imageio[ffmpeg]
 RUN pip install ipython
 RUN pip install matplotlib
 RUN pip install --upgrade keras

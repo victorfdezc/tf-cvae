@@ -5,6 +5,7 @@ import imageio
 import matplotlib.pyplot as plt
 import numpy as np
 import PIL
+from PIL import Image
 import tensorflow as tf
 import tensorflow_probability as tfp
 import time
@@ -23,6 +24,8 @@ class CVAE(tf.keras.Model):
                 filters=32, kernel_size=3, strides=(2, 2), activation='relu'),
             tf.keras.layers.Conv2D(
                 filters=64, kernel_size=3, strides=(2, 2), activation='relu'),
+            tf.keras.layers.Conv2D(
+                filters=128, kernel_size=3, strides=(2, 2), activation='relu'),
             tf.keras.layers.Flatten(),
             # No activation
             tf.keras.layers.Dense(latent_dim + latent_dim),
@@ -35,10 +38,13 @@ class CVAE(tf.keras.Model):
             tf.keras.layers.Dense(units=7*7*32, activation=tf.nn.relu),
             tf.keras.layers.Reshape(target_shape=(7, 7, 32)),
             tf.keras.layers.Conv2DTranspose(
+                filters=128, kernel_size=3, strides=2, padding='same',
+                activation='relu'),
+            tf.keras.layers.Conv2DTranspose(
                 filters=64, kernel_size=3, strides=2, padding='same',
                 activation='relu'),
             tf.keras.layers.Conv2DTranspose(
-                filters=32, kernel_size=3, strides=2, padding='same',
+                filters=32, kernel_size=3, strides=1, padding='same',
                 activation='relu'),
             # No activation
             tf.keras.layers.Conv2DTranspose(
@@ -147,12 +153,43 @@ def plot_latent_images(model, n, digit_size=28):
   plt.show()
 
 
+def extract_frames(video_path):
+  video_reader = imageio.get_reader(video_path)
+  frames = []
+  for frame in video_reader:
+    # Convert frame to PIL Image
+    pil_frame = Image.fromarray(frame)
+    # Convert to grayscale
+    grayscale_frame = pil_frame.convert('L')
+    # Resize frame to 28x28
+    resized_frame = grayscale_frame.resize((200, 200))
+    frames.append(resized_frame)
+  return frames
+
+def split_frames(frames, num_images_set1):
+    set1 = frames[:num_images_set1]
+    set2 = frames[num_images_set1:]
+    return set1, set2
+
+
 train_size = 60000
-batch_size = 32
+batch_size = 256
 test_size = 10000
+epochs = 100
+# set the dimensionality of the latent space to a plane for visualization later
+latent_dim = 128
+num_examples_to_generate = 16
 
 
 (train_images, _), (test_images, _) = tf.keras.datasets.mnist.load_data()
+# frames = extract_frames("video_cortito.mp4")
+# print("Shape:", np.shape(frames))
+
+# train_images, test_images = split_frames(frames, 2400)
+# train_images = np.array(train_images)
+# test_images = np.array(test_images)
+# print("Number of frames in train_images:", len(train_images))
+# print("Number of frames in test_images:", len(test_images))
 
 train_images = preprocess_images(train_images)
 test_images = preprocess_images(test_images)
@@ -165,11 +202,6 @@ test_dataset = (tf.data.Dataset.from_tensor_slices(test_images)
                 
 optimizer = tf.keras.optimizers.Adam(1e-4)
 
-
-epochs = 30
-# set the dimensionality of the latent space to a plane for visualization later
-latent_dim = 2
-num_examples_to_generate = 16
 
 # keeping the random vector constant for generation (prediction) so
 # it will be easier to see the improvement.
@@ -213,4 +245,3 @@ with imageio.get_writer(anim_file, mode='I') as writer:
   writer.append_data(image)
   
 embed.embed_file(anim_file)
-
