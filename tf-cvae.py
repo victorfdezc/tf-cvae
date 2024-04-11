@@ -1,5 +1,5 @@
 from IPython import display
-
+import os
 import glob
 import imageio
 import matplotlib.pyplot as plt
@@ -20,6 +20,7 @@ class CVAE(tf.keras.Model):
     self.encoder = tf.keras.Sequential(
         [
             tf.keras.layers.InputLayer(input_shape=(image_shape, image_shape, 3)),
+            tf.keras.layers.Conv2D(filters=16, kernel_size=3, strides=2, activation='relu'),
             tf.keras.layers.Conv2D(filters=16, kernel_size=3, strides=2, activation='relu'),
             tf.keras.layers.Flatten(),
             tf.keras.layers.Dense(latent_dim + latent_dim),
@@ -156,6 +157,51 @@ def extract_frames(video_path):
     frames.append(normalized_frame)
   return frames
 
+def read_image(image_path):
+  # Read an image file
+  image = imageio.imread(image_path)
+  # Get only RGB channels
+  image = image[:,:,:3]
+  return np.array(image)
+
+def read_dataset(dataset_path):
+  # Check if the path exists
+  if not os.path.exists(path):
+      print("The specified path does not exist.")
+      return
+  # Check if the path is a directory
+  if not os.path.isdir(path):
+      print("The specified path is not a directory.")
+      return
+  # List all files in the directory
+  files = os.listdir(path)
+  
+  dataset = []
+  for file in files:
+    dataset.append(read_image(os.path.join(path, file)))
+  return dataset
+
+def resize_image(image, image_shape):
+  return tf.image.resize(image, [image_shape, image_shape])
+
+def normalize_image(image):
+  # Normalize the image by 255
+  normalized_image = resized_image / 255.0
+
+def inference_image(model, image):
+  reshaped_image = tf.expand_dims(image, axis=0)
+  mean, logvar = model.encode(reshaped_image)
+  z = model.reparameterize(mean, logvar)
+  predictions = model.sample(z)
+  return predictions[0, :, :, :]
+
+def save_image(image,img_name):
+  fig = plt.figure()
+  plt.imshow(image)
+  plt.axis('off')
+  plt.savefig(img_name + '.png')
+  
+
 def split_frames(frames, num_images_set1):
     set1 = frames[:num_images_set1]
     set2 = frames[num_images_set1:]
@@ -173,26 +219,45 @@ image_shape = 256
 
 
 # (train_images, _), (test_images, _) = tf.keras.datasets.mnist.load_data()
-frames = extract_frames("video_cortito.mp4")
-print("Shape:", np.shape(frames))
 
-train_images, test_images = split_frames(frames, 2400)
+# frames = extract_frames("video_cortito.mp4")
+# print("Number of frames:", np.shape(frames))
+# train_images, test_images = split_frames(frames, 2400)
+
+# read images
+train_images = read_dataset("data_in/")
+train_images, test_images = split_frames(frames, 10)
+
+# Get the data prepared
 train_size = len(train_images)
 test_size = len(test_images)
 train_images = np.array(train_images)
 test_images = np.array(test_images)
-print("Number of frames in train_images:", len(train_images))
-print("Number of frames in test_images:", len(test_images))
+print("Number of frames in train_images:", train_size)
+print("Number of frames in test_images:", test_size)
 print("Shape of train_images:", np.shape(train_images))
 print("Shape of test_images:", np.shape(test_images))
 
+
+# Preprocess data
 train_images = preprocess_images(train_images)
 test_images = preprocess_images(test_images)
 
-plt.imshow(train_images[0, :, :, :].astype('float32'))
-plt.axis('off')
-plt.savefig('train_image.png')
+# fig = plt.figure()
+# plt.imshow(test_images[0, :, :, :].astype('float32'))
+# plt.axis('off')
+# plt.savefig('test_image.png')
 
+# # Read an image file
+# image_path = "chino.png"
+# image = imageio.imread(image_path)
+# resized_image = tf.image.resize(image, [image_shape, image_shape])
+# fig = plt.figure()
+# plt.imshow(resized_image)
+# plt.axis('off')
+# plt.savefig('chino_image.png')
+
+# Shuffle and create TF Dataset
 train_dataset = (tf.data.Dataset.from_tensor_slices(train_images)
                  .shuffle(train_size).batch(batch_size))
 del train_images
@@ -200,7 +265,7 @@ test_dataset = (tf.data.Dataset.from_tensor_slices(test_images)
                 .shuffle(test_size).batch(batch_size))
 del test_images
                 
-                
+# Define optimizer
 optimizer = tf.keras.optimizers.Adam(1e-4)
 
 
