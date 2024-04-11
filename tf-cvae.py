@@ -19,15 +19,9 @@ class CVAE(tf.keras.Model):
     self.latent_dim = latent_dim
     self.encoder = tf.keras.Sequential(
         [
-            tf.keras.layers.InputLayer(input_shape=(28, 28, 1)),
-            tf.keras.layers.Conv2D(
-                filters=32, kernel_size=3, strides=(2, 2), activation='relu'),
-            tf.keras.layers.Conv2D(
-                filters=64, kernel_size=3, strides=(2, 2), activation='relu'),
-            tf.keras.layers.Conv2D(
-                filters=128, kernel_size=3, strides=(2, 2), activation='relu'),
+            tf.keras.layers.InputLayer(input_shape=(image_shape, image_shape, 3)),
+            tf.keras.layers.Conv2D(filters=16, kernel_size=3, strides=2, activation='relu'),
             tf.keras.layers.Flatten(),
-            # No activation
             tf.keras.layers.Dense(latent_dim + latent_dim),
         ]
     )
@@ -35,22 +29,15 @@ class CVAE(tf.keras.Model):
     self.decoder = tf.keras.Sequential(
         [
             tf.keras.layers.InputLayer(input_shape=(latent_dim,)),
-            tf.keras.layers.Dense(units=7*7*32, activation=tf.nn.relu),
-            tf.keras.layers.Reshape(target_shape=(7, 7, 32)),
+            tf.keras.layers.Dense(units=image_shape//2*image_shape//2*16, activation=tf.nn.relu),
+            tf.keras.layers.Reshape(target_shape=(image_shape//2, image_shape//2, 16)),
             tf.keras.layers.Conv2DTranspose(
-                filters=128, kernel_size=3, strides=2, padding='same',
-                activation='relu'),
+                filters=32, kernel_size=3, strides=2, padding='same', activation='relu'),
             tf.keras.layers.Conv2DTranspose(
-                filters=64, kernel_size=3, strides=2, padding='same',
-                activation='relu'),
-            tf.keras.layers.Conv2DTranspose(
-                filters=32, kernel_size=3, strides=1, padding='same',
-                activation='relu'),
-            # No activation
-            tf.keras.layers.Conv2DTranspose(
-                filters=1, kernel_size=3, strides=1, padding='same'),
+                filters=3, kernel_size=3, strides=1, padding='same', activation='sigmoid'),
         ]
     )
+
 
   @tf.function
   def sample(self, eps=None):
@@ -85,11 +72,11 @@ def log_normal_pdf(sample, mean, logvar, raxis=1):
 def compute_loss(model, x):
   mean, logvar = model.encode(x)
   z = model.reparameterize(mean, logvar)
-  x_logit = model.decode(z)
-  cross_ent = tf.nn.sigmoid_cross_entropy_with_logits(logits=x_logit, labels=x)
-  logpx_z = -tf.reduce_sum(cross_ent, axis=[1, 2, 3])
-  logpz = log_normal_pdf(z, 0., 0.)
-  logqz_x = log_normal_pdf(z, mean, logvar)
+  x_logit = tf.cast(model.decode(z), tf.float16)
+  cross_ent = tf.cast(tf.nn.sigmoid_cross_entropy_with_logits(logits=x_logit, labels=x), tf.float32)
+  logpx_z = tf.cast(-tf.reduce_sum(cross_ent, axis=[1, 2, 3]), tf.float32)
+  logpz = tf.cast(log_normal_pdf(z, 0., 0.), tf.float32)
+  logqz_x = tf.cast(log_normal_pdf(z, mean, logvar), tf.float32)
   return -tf.reduce_mean(logpx_z + logpz - logqz_x)
 
 
@@ -114,16 +101,17 @@ def generate_and_save_images(model, epoch, test_sample):
 
   for i in range(predictions.shape[0]):
     plt.subplot(4, 4, i + 1)
-    plt.imshow(predictions[i, :, :, 0], cmap='gray')
+    plt.imshow(predictions[i, :, :, :])
     plt.axis('off')
 
   # tight_layout minimizes the overlap between 2 sub-plots
   plt.savefig('image_at_epoch_{:04d}.png'.format(epoch))
-  plt.show()
+  # plt.show()
 
 def preprocess_images(images):
-  images = images.reshape((images.shape[0], 28, 28, 1)) / 255.
-  return np.where(images > .5, 1.0, 0.0).astype('float32')
+  images = images.reshape((images.shape[0], image_shape, image_shape, 3)).astype('float16') #/ 255.
+  # return np.where(images > .5, 1.0, 0.0).astype('float32')
+  return images
 
 def display_image(epoch_no):
   return PIL.Image.open('image_at_epoch_{:04d}.png'.format(epoch_no))
@@ -150,7 +138,7 @@ def plot_latent_images(model, n, digit_size=28):
   plt.figure(figsize=(10, 10))
   plt.imshow(image, cmap='Greys_r')
   plt.axis('Off')
-  plt.show()
+  # plt.show()
 
 
 def extract_frames(video_path):
@@ -160,10 +148,12 @@ def extract_frames(video_path):
     # Convert frame to PIL Image
     pil_frame = Image.fromarray(frame)
     # Convert to grayscale
-    grayscale_frame = pil_frame.convert('L')
+    # grayscale_frame = pil_frame.convert('L')
     # Resize frame to 28x28
-    resized_frame = grayscale_frame.resize((200, 200))
-    frames.append(resized_frame)
+    resized_frame = pil_frame.resize((image_shape, image_shape))
+    # Divide each pixel value by 255 to normalize the image
+    normalized_frame = Image.eval(resized_frame, lambda x: x / 255.0)
+    frames.append(normalized_frame)
   return frames
 
 def split_frames(frames, num_images_set1):
@@ -172,32 +162,43 @@ def split_frames(frames, num_images_set1):
     return set1, set2
 
 
-train_size = 60000
-batch_size = 256
-test_size = 10000
+# train_size = 60000
+batch_size = 128
+# test_size = 10000
 epochs = 100
 # set the dimensionality of the latent space to a plane for visualization later
-latent_dim = 128
+latent_dim = 32
 num_examples_to_generate = 16
+image_shape = 256
 
 
-(train_images, _), (test_images, _) = tf.keras.datasets.mnist.load_data()
-# frames = extract_frames("video_cortito.mp4")
-# print("Shape:", np.shape(frames))
+# (train_images, _), (test_images, _) = tf.keras.datasets.mnist.load_data()
+frames = extract_frames("video_cortito.mp4")
+print("Shape:", np.shape(frames))
 
-# train_images, test_images = split_frames(frames, 2400)
-# train_images = np.array(train_images)
-# test_images = np.array(test_images)
-# print("Number of frames in train_images:", len(train_images))
-# print("Number of frames in test_images:", len(test_images))
+train_images, test_images = split_frames(frames, 2400)
+train_size = len(train_images)
+test_size = len(test_images)
+train_images = np.array(train_images)
+test_images = np.array(test_images)
+print("Number of frames in train_images:", len(train_images))
+print("Number of frames in test_images:", len(test_images))
+print("Shape of train_images:", np.shape(train_images))
+print("Shape of test_images:", np.shape(test_images))
 
 train_images = preprocess_images(train_images)
 test_images = preprocess_images(test_images)
 
+plt.imshow(train_images[0, :, :, :].astype('float32'))
+plt.axis('off')
+plt.savefig('train_image.png')
+
 train_dataset = (tf.data.Dataset.from_tensor_slices(train_images)
                  .shuffle(train_size).batch(batch_size))
+del train_images
 test_dataset = (tf.data.Dataset.from_tensor_slices(test_images)
                 .shuffle(test_size).batch(batch_size))
+del test_images
                 
                 
 optimizer = tf.keras.optimizers.Adam(1e-4)
