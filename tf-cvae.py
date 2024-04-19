@@ -35,8 +35,8 @@ class CVAE(tf.keras.Model):
     self.decoder = tf.keras.Sequential(
         [
             tf.keras.layers.InputLayer(input_shape=(latent_dim,)),
-            tf.keras.layers.Dense(units=7*7*32, activation=tf.nn.relu),
-            tf.keras.layers.Reshape(target_shape=(7, 7, 32)),
+            tf.keras.layers.Dense(units=int(img_shape/4)*int(img_shape/4)*32, activation=tf.nn.relu),
+            tf.keras.layers.Reshape(target_shape=(int(img_shape/4), int(img_shape/4), 32)),
             tf.keras.layers.Conv2DTranspose(
                 filters=128, kernel_size=3, strides=2, padding='same',
                 activation='relu'),
@@ -156,19 +156,15 @@ def plot_latent_images(model, n, digit_size=28):
   # plt.show()
 
 
-def extract_frames(video_path, grayscale = False):
+def extract_frames(video_path, img_channels):
   video_reader = imageio.get_reader(video_path)
   frames = []
   for frame in video_reader:
     # Convert frame to PIL Image
     pil_frame = Image.fromarray(frame)
     # Convert to grayscale
-    if grayscale: pil_frame = pil_frame.convert('L')
-    # Resize frame to 28x28
-    resized_frame = pil_frame.resize((image_shape, image_shape))
-    # Divide each pixel value by 255 to normalize the image
-    normalized_frame = Image.eval(resized_frame, lambda x: x / 255.0)
-    frames.append(normalized_frame)
+    if img_channels==1: pil_frame = pil_frame.convert('L')
+    frames.append(pil_frame)
   return frames
 
 def read_image(image_path,channels=3):
@@ -236,20 +232,20 @@ def split_frames(frames, num_images_set1):
     return set1, set2
 
 
-batch_size = 256
-epochs = 100
+batch_size = 64
+epochs = 50
 # set the dimensionality of the latent space to a plane for visualization later
 latent_dim = 128
 num_examples_to_generate = 16
-img_shape = 28
+img_shape = 256
 img_channels = 1
 
 
-(train_images, _), (test_images, _) = tf.keras.datasets.mnist.load_data()
+# (train_images, _), (test_images, _) = tf.keras.datasets.mnist.load_data()
 
-# frames = extract_frames("video_cortito.mp4")
-# print("Number of frames:", np.shape(frames))
-# train_images, test_images = split_frames(frames, 2400)
+frames = extract_frames("data_in/video_cortito.mp4", img_channels)
+print("Number of frames:", np.shape(frames))
+train_images, test_images = split_frames(frames, 2400)
 
 # read images
 # train_images = read_dataset("data_in/selulitis/", img_channels)
@@ -287,14 +283,12 @@ print("Shape of test_images:", np.shape(test_images))
 # plt.axis('off')
 # plt.savefig('test_image.png')
 
-# # Read an image file
-# image_path = "chino.png"
-# image = imageio.imread(image_path)
-# resized_image = tf.image.resize(image, [image_shape, image_shape])
-# fig = plt.figure()
-# plt.imshow(resized_image)
-# plt.axis('off')
-# plt.savefig('chino_image.png')
+# Read random images
+random_images = read_dataset("data_in/test_images_random",channels=img_channels)
+random_images = resize_dataset_images(random_images, img_shape)
+random_images = preprocess_images(random_images,img_shape, img_channels)
+print("Shape of chino:", np.shape(random_images))
+
 
 # Shuffle and create TF Dataset
 train_dataset = (tf.data.Dataset.from_tensor_slices(train_images)
@@ -313,13 +307,22 @@ optimizer = tf.keras.optimizers.Adam(1e-4)
 random_vector_for_generation = tf.random.normal(
     shape=[num_examples_to_generate, latent_dim])
 model = CVAE(latent_dim, img_shape, img_channels)
+print("Encoder summary:\n") 
+model.encoder.summary()
+print("Decoder summary:\n")
+model.decoder.summary()
+encoder_checkpoint_path = "training_1/cp-encoder-{epoch:04d}.weights.h5"
+decoder_checkpoint_path = "training_1/cp-decoder-{epoch:04d}.weights.h5"
+# Save the weights using the `checkpoint_path` format
+# model.encoder.save_weights(encoder_checkpoint_path.format(epoch=0))
+# model.decoder.save_weights(decoder_checkpoint_path.format(epoch=0))
 
 # Pick a sample of the test set for generating output images
 assert batch_size >= num_examples_to_generate
 for test_batch in test_dataset.take(1):
-# for test_batch in train_dataset.take(1):
   test_sample = test_batch[0:num_examples_to_generate, :, :, :]
-  
+save_image(test_sample[0],"test_sample_original")
+
 generate_and_save_images(model, 0, test_sample)
 
 for epoch in range(1, epochs + 1):
@@ -339,6 +342,16 @@ for epoch in range(1, epochs + 1):
   
   #plt.imshow(display_image(epoch))
   #plt.axis('off')  # Display images
+
+# Save the weights using the `checkpoint_path` format
+model.encoder.save_weights(encoder_checkpoint_path.format(epoch=epochs))
+model.decoder.save_weights(decoder_checkpoint_path.format(epoch=epochs))
+
+# Make some predictions
+save_image(inference_image(model, test_sample[0]),"test_sample_predicted_trained")
+save_image(inference_image(model, random_images[0]),"chino_predicted_trained")
+save_image(inference_image(model, random_images[1]),"test_image_predicted_trained")
+
 
 anim_file = 'data_out/cvae.gif'
 with imageio.get_writer(anim_file, mode='I') as writer:
