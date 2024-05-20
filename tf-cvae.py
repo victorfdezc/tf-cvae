@@ -9,103 +9,11 @@ from PIL import Image
 import tensorflow as tf
 import tensorflow_probability as tfp
 import time
+# !pip install git+https://github.com/tensorflow/docs
 import tensorflow_docs.vis.embed as embed
-
-class CVAE(tf.keras.Model):
-  """Convolutional variational autoencoder."""
-
-  def __init__(self, latent_dim, image_shape, img_channels=1):
-    super(CVAE, self).__init__()
-    self.latent_dim = latent_dim
-    self.encoder = tf.keras.Sequential(
-        [
-            tf.keras.layers.InputLayer(input_shape=(image_shape, image_shape, img_channels)),
-            tf.keras.layers.Conv2D(
-                filters=32, kernel_size=3, strides=(2, 2), activation='relu'),
-            tf.keras.layers.Conv2D(
-                filters=64, kernel_size=3, strides=(2, 2), activation='relu'),
-            tf.keras.layers.Conv2D(
-                filters=128, kernel_size=3, strides=(2, 2), activation='relu'),
-            tf.keras.layers.Flatten(),
-            # No activation
-            tf.keras.layers.Dense(latent_dim + latent_dim),
-        ]
-    )
-
-    self.decoder = tf.keras.Sequential(
-        [
-            tf.keras.layers.InputLayer(input_shape=(latent_dim,)),
-            tf.keras.layers.Dense(units=int(img_shape/4)*int(img_shape/4)*32, activation=tf.nn.relu),
-            tf.keras.layers.Reshape(target_shape=(int(img_shape/4), int(img_shape/4), 32)),
-            tf.keras.layers.Conv2DTranspose(
-                filters=128, kernel_size=3, strides=2, padding='same',
-                activation='relu'),
-            tf.keras.layers.Conv2DTranspose(
-                filters=64, kernel_size=3, strides=2, padding='same',
-                activation='relu'),
-            tf.keras.layers.Conv2DTranspose(
-                filters=32, kernel_size=3, strides=1, padding='same',
-                activation='relu'),
-            # No activation
-            tf.keras.layers.Conv2DTranspose(
-                filters=img_channels, kernel_size=3, strides=1, padding='same'),
-        ]
-    )
-
-
-  @tf.function
-  def sample(self, eps=None):
-    if eps is None:
-      eps = tf.random.normal(shape=(100, self.latent_dim))
-    return self.decode(eps, apply_sigmoid=True)
-
-  def encode(self, x):
-    mean, logvar = tf.split(self.encoder(x), num_or_size_splits=2, axis=1)
-    return mean, logvar
-
-  def reparameterize(self, mean, logvar):
-    eps = tf.random.normal(shape=mean.shape)
-    return eps * tf.exp(logvar * .5) + mean
-
-  def decode(self, z, apply_sigmoid=False):
-    logits = self.decoder(z)
-    if apply_sigmoid:
-      probs = tf.sigmoid(logits)
-      return probs
-    return logits
-
-
-
-def log_normal_pdf(sample, mean, logvar, raxis=1):
-  log2pi = tf.math.log(2. * np.pi)
-  return tf.reduce_sum(
-      -.5 * ((sample - mean) ** 2. * tf.exp(-logvar) + logvar + log2pi),
-      axis=raxis)
-
-
-def compute_loss(model, x):
-  mean, logvar = model.encode(x)
-  z = model.reparameterize(mean, logvar)
-  ## TODO: FLOAT16? OR FLOAT32?
-  x_logit = tf.cast(model.decode(z), tf.float32)
-  cross_ent = tf.cast(tf.nn.sigmoid_cross_entropy_with_logits(logits=x_logit, labels=x), tf.float32)
-  logpx_z = tf.cast(-tf.reduce_sum(cross_ent, axis=[1, 2, 3]), tf.float32)
-  logpz = tf.cast(log_normal_pdf(z, 0., 0.), tf.float32)
-  logqz_x = tf.cast(log_normal_pdf(z, mean, logvar), tf.float32)
-  return -tf.reduce_mean(logpx_z + logpz - logqz_x)
-
-
-@tf.function
-def train_step(model, x, optimizer):
-  """Executes one training step and returns the loss.
-
-  This function computes the loss and gradients, and uses the latter to
-  update the model's parameters.
-  """
-  with tf.GradientTape() as tape:
-    loss = compute_loss(model, x)
-  gradients = tape.gradient(loss, model.trainable_variables)
-  optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+import gc
+from tf_utils.train_vae import *
+from models.cvae import *
   
   
 def generate_and_save_images(model, epoch, test_sample):
@@ -167,9 +75,10 @@ def extract_frames(video_path, img_channels):
     frames.append(pil_frame)
   return frames
 
-def read_image(image_path,channels=3):
+def read_image(image_path, image_shape, channels=3):
   # Read an image file
   image = PIL.Image.open(image_path)
+  image.resize((image_shape, image_shape), Image.Resampling.LANCZOS)
   if channels == 1: 
     image = image.convert('L')
     image = np.array(image)
@@ -179,7 +88,7 @@ def read_image(image_path,channels=3):
     image = image[:,:,:channels]
   return np.array(image)
 
-def read_dataset(dataset_path, channels=3):
+def read_dataset(dataset_path, image_shape=256, channels=3):
   # Check if the path exists
   if not os.path.exists(dataset_path):
       print("The specified path does not exist.")
@@ -193,7 +102,7 @@ def read_dataset(dataset_path, channels=3):
   
   dataset = []
   for file in files:
-    dataset.append(read_image(os.path.join(dataset_path, file), channels))
+    dataset.append(read_image(os.path.join(dataset_path, file), image_shape, channels))
   return dataset
 
 def resize_image(image, image_shape):
@@ -232,13 +141,13 @@ def split_frames(frames, num_images_set1):
     return set1, set2
 
 
-batch_size = 64
-epochs = 50
+batch_size = 4
+epochs = 1
 # set the dimensionality of the latent space to a plane for visualization later
 latent_dim = 128
-num_examples_to_generate = 16
-img_shape = 256
-img_channels = 1
+num_examples_to_generate = 1
+img_shape = 200
+img_channels = 3
 
 
 # (train_images, _), (test_images, _) = tf.keras.datasets.mnist.load_data()
@@ -250,6 +159,8 @@ train_images, test_images = split_frames(frames, 2400)
 # read images
 # train_images = read_dataset("data_in/selulitis/", img_channels)
 # train_images, test_images = split_frames(train_images, 1)
+# train_images = read_dataset("data_in/landscapes/", img_shape, channels = img_channels)
+# train_images, test_images = split_frames(train_images, int(len(train_images)/4*3))
 
 # Get the data prepared
 train_size = len(train_images)
@@ -294,9 +205,11 @@ print("Shape of chino:", np.shape(random_images))
 train_dataset = (tf.data.Dataset.from_tensor_slices(train_images)
                  .shuffle(train_size).batch(batch_size))
 del train_images
+gc.collect()
 test_dataset = (tf.data.Dataset.from_tensor_slices(test_images)
                 .shuffle(test_size).batch(batch_size))
 del test_images
+gc.collect()
                 
 # Define optimizer
 optimizer = tf.keras.optimizers.Adam(1e-4)
@@ -306,7 +219,7 @@ optimizer = tf.keras.optimizers.Adam(1e-4)
 # it will be easier to see the improvement.
 random_vector_for_generation = tf.random.normal(
     shape=[num_examples_to_generate, latent_dim])
-model = CVAE(latent_dim, img_shape, img_channels)
+model = CVAE(latent_dim, img_shape, img_channels, load_model = False)
 print("Encoder summary:\n") 
 model.encoder.summary()
 print("Decoder summary:\n")
@@ -344,8 +257,8 @@ for epoch in range(1, epochs + 1):
   #plt.axis('off')  # Display images
 
 # Save the weights using the `checkpoint_path` format
-model.encoder.save_weights(encoder_checkpoint_path.format(epoch=epochs))
-model.decoder.save_weights(decoder_checkpoint_path.format(epoch=epochs))
+# model.encoder.save_weights(encoder_checkpoint_path.format(epoch=epochs))
+# model.decoder.save_weights(decoder_checkpoint_path.format(epoch=epochs))
 
 # Make some predictions
 save_image(inference_image(model, test_sample[0]),"test_sample_predicted_trained")
