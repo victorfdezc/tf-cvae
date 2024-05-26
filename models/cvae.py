@@ -67,3 +67,9 @@ class CVAE(tf.keras.Model):
       probs = tf.sigmoid(logits)
       return probs
     return logits
+
+  def generate_images(input_images):
+    mean, logvar = self.encode(input_images)
+    z = self.reparameterize(mean, logvar)
+    predictions = self.sample(z)
+    return predictions

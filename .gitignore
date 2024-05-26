@@ -6,3 +6,6 @@
 
 # Training
 *.h5
+
+# Python
+*.pyc
