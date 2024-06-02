@@ -1,66 +1,9 @@
-from IPython import display
-import os
-import glob
-import imageio
-import matplotlib.pyplot as plt
-import numpy as np
-import PIL
-from PIL import Image
-import tensorflow as tf
-import tensorflow_probability as tfp
 import time
-# !pip install git+https://github.com/tensorflow/docs
-import tensorflow_docs.vis.embed as embed
 import gc
 from tf_utils.manage_data import *
 from tf_utils.process_images import *
 from models.cvae import *
   
-  
-def generate_and_save_images(model, epoch, test_sample):
-  mean, logvar = model.encode(test_sample)
-  z = model.reparameterize(mean, logvar)
-  predictions = model.sample(z)
-  fig = plt.figure(figsize=(4, 4))
-
-  for i in range(predictions.shape[0]):
-    plt.subplot(int(np.sqrt(predictions.shape[0])), int(np.sqrt(predictions.shape[0])), i + 1)
-    plt.imshow(predictions[i, :, :, :])
-    plt.axis('off')
-
-  # tight_layout minimizes the overlap between 2 sub-plots
-  plt.savefig('data_out/image_at_epoch_{:04d}.png'.format(epoch))
-  # plt.show()
-
-
-def display_image(epoch_no):
-  return PIL.Image.open('image_at_epoch_{:04d}.png'.format(epoch_no))
-
-
-def plot_latent_images(model, n, digit_size=28):
-  """Plots n x n digit images decoded from the latent space."""
-
-  norm = tfp.distributions.Normal(0, 1)
-  grid_x = norm.quantile(np.linspace(0.05, 0.95, n))
-  grid_y = norm.quantile(np.linspace(0.05, 0.95, n))
-  image_width = digit_size*n
-  image_height = image_width
-  image = np.zeros((image_height, image_width))
-
-  for i, yi in enumerate(grid_x):
-    for j, xi in enumerate(grid_y):
-      z = np.array([[xi, yi]])
-      x_decoded = model.sample(z)
-      digit = tf.reshape(x_decoded[0], (digit_size, digit_size))
-      image[i * digit_size: (i + 1) * digit_size,
-            j * digit_size: (j + 1) * digit_size] = digit.numpy()
-
-  plt.figure(figsize=(10, 10))
-  plt.imshow(image, cmap='Greys_r')
-  plt.axis('Off')
-  # plt.show()
-
-
 
 
 ##########################
@@ -123,10 +66,6 @@ random_vector_for_generation = tf.random.normal(
 # Create model
 model = CVAE(latent_dim, image_shape, image_channels, load_model = load_model)
 
-# Save the weights using the `checkpoint_path` format
-# model.encoder.save_weights(encoder_checkpoint_path.format(epoch=0))
-# model.decoder.save_weights(decoder_checkpoint_path.format(epoch=0))
-
 # Pick a sample of the test set for generating output images
 assert batch_size >= num_examples_to_generate
 for test_batch in test_dataset.take(1):
@@ -146,14 +85,12 @@ for epoch in range(1, epochs + 1):
   for test_x in test_dataset:
     loss(model.compute_loss(test_x))
   elbo = -loss.result()
-  display.clear_output(wait=False)
+
   print('Epoch: {}, Test set ELBO: {}, time elapse for current epoch: {}'
         .format(epoch, elbo, end_time - start_time))
   generated_images = model.inference_batch_images(test_sample)
   save_image_matrix(generated_images, 'data_out/image_at_epoch_{:04d}.png'.format(epoch))
   
-  #plt.imshow(display_image(epoch))
-  #plt.axis('off')  # Display images
 
 # Save the weights using the `checkpoint_path` format
 if not load_model:

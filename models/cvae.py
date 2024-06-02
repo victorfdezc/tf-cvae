@@ -44,9 +44,9 @@ class CVAE(tf.keras.Model):
     )
 
     print("Encoder summary:\n") 
-    model.encoder.summary()
+    self.encoder.summary()
     print("Decoder summary:\n")
-    model.decoder.summary()
+    self.decoder.summary()
 
     if load_model:
       # Load the previously saved weights
