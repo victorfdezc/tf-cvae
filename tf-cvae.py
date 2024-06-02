@@ -12,7 +12,6 @@ import time
 # !pip install git+https://github.com/tensorflow/docs
 import tensorflow_docs.vis.embed as embed
 import gc
-from tf_utils.train_vae import *
 from tf_utils.manage_data import *
 from tf_utils.process_images import *
 from models.cvae import *
@@ -62,33 +61,27 @@ def plot_latent_images(model, n, digit_size=28):
   # plt.show()
 
 
-def inference_image(model, image):
-  reshaped_image = tf.expand_dims(image, axis=0)
-  mean, logvar = model.encode(reshaped_image)
-  z = model.reparameterize(mean, logvar)
-  predictions = model.sample(z)
-  return predictions[0, :, :, :]
 
 
 ##########################
 #   GENERAL PARAMETERS   #
 ##########################
 batch_size = 4
-epochs = 100
+epochs = 1
 latent_dim = 128 # set the dimensionality of the latent space to a plane for visualization later
 num_examples_to_generate = 1
-img_shape = 200
-img_channels = 3
-load_model = False # Load model according previous saved checkpoints
+image_shape = 200
+image_channels = 3
+load_model = True # Load model according previous saved checkpoints
 ###########################################
 
 #### Download dataset #####
 # (train_images, _), (test_images, _) = tf.keras.datasets.mnist.load_data()
 ####### Load a video #######
-train_images = extract_video_frames("data_in/video_cortito.mp4", img_shape=img_shape, img_channels=img_channels)
+train_images = extract_video_frames("data_in/video_cortito.mp4", img_shape=image_shape, img_channels=image_channels)
 ### Load a set of images ###
-# train_images = load_img_dataset("data_in/selulitis/", img_shape, img_channels = img_channels)
-# train_images = load_img_dataset("data_in/landscapes/", img_shape, img_channels = img_channels)
+# train_images = load_image_dataset("data_in/selulitis/", image_shape, image_channels = image_channels)
+# train_images = load_image_dataset("data_in/landscapes/", image_shape, image_channels = image_channels)
 #############################
 
 # Preprocess data
@@ -103,7 +96,7 @@ print("Shape of train images:", np.shape(train_images))
 print("Shape of test images:", np.shape(test_images))
 
 # Read random images
-random_images = load_img_dataset("data_in/test_images_random", img_shape, img_channels = img_channels)
+random_images = load_image_dataset("data_in/test_images_random", image_shape, img_channels = image_channels)
 random_images = normalize_images(random_images)
 print("Shape of random images:", np.shape(random_images))
 
@@ -128,13 +121,7 @@ random_vector_for_generation = tf.random.normal(
     shape=[num_examples_to_generate, latent_dim])
 
 # Create model
-model = CVAE(latent_dim, img_shape, img_channels, load_model = load_model)
-print("Encoder summary:\n") 
-model.encoder.summary()
-print("Decoder summary:\n")
-model.decoder.summary()
-encoder_checkpoint_path = "training_1/cp-encoder-{epoch:04d}.weights.h5"
-decoder_checkpoint_path = "training_1/cp-decoder-{epoch:04d}.weights.h5"
+model = CVAE(latent_dim, image_shape, image_channels, load_model = load_model)
 
 # Save the weights using the `checkpoint_path` format
 # model.encoder.save_weights(encoder_checkpoint_path.format(epoch=0))
@@ -144,46 +131,44 @@ decoder_checkpoint_path = "training_1/cp-decoder-{epoch:04d}.weights.h5"
 assert batch_size >= num_examples_to_generate
 for test_batch in test_dataset.take(1):
   test_sample = test_batch[0:num_examples_to_generate, :, :, :]
-save_img(test_sample[0],"test_sample_original")
+save_image(test_sample[0],"test_sample_original")
 
-generate_and_save_images(model, 0, test_sample)
+generated_images = model.inference_batch_images(test_sample)
+save_image_matrix(generated_images, 'data_out/image_at_epoch_{:04d}.png'.format(0))
 
 for epoch in range(1, epochs + 1):
   start_time = time.time()
   for train_x in train_dataset:
-    train_step(model, train_x, optimizer)
+    model.train_step(train_x, optimizer)
   end_time = time.time()
 
   loss = tf.keras.metrics.Mean()
   for test_x in test_dataset:
-    loss(compute_loss(model, test_x))
+    loss(model.compute_loss(test_x))
   elbo = -loss.result()
   display.clear_output(wait=False)
   print('Epoch: {}, Test set ELBO: {}, time elapse for current epoch: {}'
         .format(epoch, elbo, end_time - start_time))
-  generate_and_save_images(model, epoch, test_sample)
+  generated_images = model.inference_batch_images(test_sample)
+  save_image_matrix(generated_images, 'data_out/image_at_epoch_{:04d}.png'.format(epoch))
   
   #plt.imshow(display_image(epoch))
   #plt.axis('off')  # Display images
 
 # Save the weights using the `checkpoint_path` format
-# model.encoder.save_weights(encoder_checkpoint_path.format(epoch=epochs))
-# model.decoder.save_weights(decoder_checkpoint_path.format(epoch=epochs))
+if not load_model:
+  model.encoder.save_weights("training_1/cp-encoder-{epoch:04d}.weights.h5".format(epoch=epochs))
+  model.decoder.save_weights("training_1/cp-decoder-{epoch:04d}.weights.h5".format(epoch=epochs))
 
 # Make some predictions
-save_img(inference_image(model, test_sample[0]),"test_sample_predicted_trained")
-save_img(inference_image(model, random_images[0]),"chino_predicted_trained")
-save_img(inference_image(model, random_images[1]),"test_image_predicted_trained")
+save_image(model.inference_image(test_sample[0]),"test_sample_predicted_trained")
+save_image(model.inference_image(random_images[0]),"chino_predicted_trained")
+save_image(model.inference_image(random_images[1]),"test_image_predicted_trained")
 
-
-anim_file = 'data_out/cvae.gif'
-with imageio.get_writer(anim_file, mode='I') as writer:
-  filenames = glob.glob('data_out/image*.png')
-  filenames = sorted(filenames)
-  for filename in filenames:
-    image = imageio.imread(filename)
-    writer.append_data(image)
-  image = imageio.imread(filename)
-  writer.append_data(image)
-  
-embed.embed_file(anim_file)
+'''
+i=0
+for image in model.sample():
+  save_image(model.sample()[0],"model_sample_random"+str(i))
+  i+=1
+'''
+save_gif('data_out/cvae', re_images_name='data_out/image*.png')
